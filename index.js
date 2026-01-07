@@ -1,4 +1,5 @@
 const express = require("express");
+const fetch = require("node-fetch");
 const app = express();
 
 app.use(express.json());
@@ -140,3 +141,4 @@ app.post("/webhook", async (req, res) => {
 app.listen(process.env.PORT || 3000, () => {
   console.log("MoneycalBot running");
 });
+
