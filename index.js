@@ -1,5 +1,4 @@
 const express = require("express");
-const fetch = require("node-fetch");
 const app = express();
 
 app.use(express.json());
@@ -7,7 +6,7 @@ app.use(express.json());
 // เก็บยอดชั่วคราว (in-memory)
 let trip = [];
 
-function replyMessage(replyToken, text) {
+async function replyMessage(replyToken, text) {
   return fetch("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
     headers: {
@@ -22,7 +21,11 @@ function replyMessage(replyToken, text) {
 }
 
 app.post("/webhook", async (req, res) => {
-  const event = req.body.events[0];
+  const event = req.body.events?.[0];
+  if (!event || !event.message || event.message.type !== "text") {
+    return res.sendStatus(200);
+  }
+
   const msg = event.message.text.trim();
   let reply = "❓ ไม่เข้าใจคำสั่ง";
 
@@ -58,7 +61,7 @@ app.post("/webhook", async (req, res) => {
       sum += Number(parts[i + 1]);
     }
 
-    reply = "📊 หารไม่เท่ากัน\nรวม " + sum + " บาท";
+    reply = `📊 หารไม่เท่ากัน\nรวม ${sum} บาท`;
   }
 
   // 4️⃣ สรุปทั้งทริป
@@ -85,4 +88,6 @@ app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
 });
 
-app.listen(process.env.PORT || 3000);
+app.listen(process.env.PORT || 3000, () => {
+  console.log("Server is running");
+});
