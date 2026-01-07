@@ -66,11 +66,25 @@ async function ocrImage(buffer) {
 }
 
 function extractAmount(text) {
-  const matches = text.match(/\d{1,3}(,\d{3})*(\.\d{2})/g);
+  if (!text) return null;
+
+  // ลบช่องว่างและตัวอักษรแปลก ๆ
+  const cleaned = text.replace(/\s+/g, "");
+
+  // จับตัวเลขหลายรูปแบบ (รองรับสลิปไทย)
+  const matches = cleaned.match(/\d{3,}(?:[.,]\d{2})?/g);
   if (!matches) return null;
-  const amounts = matches.map(v => Number(v.replace(/,/g, "")));
-  return Math.max(...amounts);
+
+  const numbers = matches
+    .map(v => Number(v.replace(/,/g, "").replace(/บาท|THB/i, "")))
+    .filter(n => !isNaN(n));
+
+  if (numbers.length === 0) return null;
+
+  // เอาค่าที่มากที่สุด (มักเป็นยอดรวม)
+  return Math.max(...numbers);
 }
+
 
 // ===== WEBHOOK =====
 app.post("/webhook", async (req, res) => {
@@ -211,6 +225,7 @@ app.post("/webhook", async (req, res) => {
 app.listen(process.env.PORT || 3000, () => {
   console.log("MoneycalBot running");
 });
+
 
 
 
