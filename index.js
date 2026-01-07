@@ -95,6 +95,9 @@ app.post("/webhook", async (req, res) => {
 
     const imageBuffer = await getLineImage(event.message.id);
     const ocrText = await ocrImage(imageBuffer);
+    console.log("===== OCR TEXT START =====");
+    console.log(ocrText);
+    console.log("===== OCR TEXT END =====");
     const amount = extractAmount(ocrText);
 
     if (amount) {
@@ -208,5 +211,6 @@ app.post("/webhook", async (req, res) => {
 app.listen(process.env.PORT || 3000, () => {
   console.log("MoneycalBot running");
 });
+
 
 
