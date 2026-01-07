@@ -28,11 +28,57 @@ async function replyMessage(replyToken, text) {
     })
   });
 }
+// ===== SLIP OCR FUNCTIONS =====
+async function getLineImage(messageId) {
+  const res = await fetch(
+    `https://api-data.line.me/v2/bot/message/${messageId}/content`,
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.LINE_ACCESS_TOKEN}`
+      }
+    }
+  );
+  const buffer = await res.arrayBuffer();
+  return Buffer.from(buffer);
+}
+
+async function ocrImage(buffer) {
+  const base64 = buffer.toString("base64");
+
+  const res = await fetch(
+    `https://vision.googleapis.com/v1/images:annotate?key=${process.env.GOOGLE_VISION_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requests: [
+          {
+            image: { content: base64 },
+            features: [{ type: "TEXT_DETECTION" }]
+          }
+        ]
+      })
+    }
+  );
+
+  const data = await res.json();
+  return data.responses?.[0]?.fullTextAnnotation?.text || "";
+}
+
+function extractAmount(text) {
+  const matches = text.match(/\d{1,3}(,\d{3})*(\.\d{2})/g);
+  if (!matches) return null;
+  const amounts = matches.map(v => Number(v.replace(/,/g, "")));
+  return Math.max(...amounts);
+}
 
 // ===== WEBHOOK =====
 app.post("/webhook", async (req, res) => {
   const event = req.body.events?.[0];
-  if (!event) return res.sendStatus(200);
+  if (!event || !event.message) {
+  return res.sendStatus(200);
+}
+
 
   const groupId =
     event.source.groupId ||
@@ -44,10 +90,31 @@ app.post("/webhook", async (req, res) => {
 
   // ===== STAGE 4: รับรูปสลิป =====
   if (event.message.type === "image") {
-    reply = "📸 รับสลิปแล้ว (กำลังเตรียมสแกน)";
+  try {
+    await replyMessage(event.replyToken, "🧾 กำลังสแกนสลิป...");
+
+    const imageBuffer = await getLineImage(event.message.id);
+    const ocrText = await ocrImage(imageBuffer);
+    const amount = extractAmount(ocrText);
+
+    if (amount) {
+      trip.push({ name: "สลิป", paid: amount });
+      reply = `📸 สแกนสลิปสำเร็จ\nยอดเงิน ${amount} บาท\nเพิ่มเข้าในทริปแล้ว`;
+    } else {
+      reply = "❌ สแกนสลิปแล้ว แต่ไม่พบยอดเงิน";
+    }
+
     await replyMessage(event.replyToken, reply);
-    return res.sendStatus(200);
+  } catch (err) {
+    console.error(err);
+    await replyMessage(
+      event.replyToken,
+      "❌ เกิดข้อผิดพลาดในการสแกนสลิป"
+    );
   }
+
+  return res.sendStatus(200);
+}
 
   if (event.message.type !== "text") {
     return res.sendStatus(200);
@@ -141,4 +208,5 @@ app.post("/webhook", async (req, res) => {
 app.listen(process.env.PORT || 3000, () => {
   console.log("MoneycalBot running");
 });
+
 
