@@ -3,11 +3,19 @@ const app = express();
 
 app.use(express.json());
 
-// เก็บยอดชั่วคราว (in-memory)
-let trip = [];
+// ===== DATA =====
+let trips = {}; // แยกตาม groupId
 
+function getTrip(groupId) {
+  if (!trips[groupId]) {
+    trips[groupId] = [];
+  }
+  return trips[groupId];
+}
+
+// ===== REPLY =====
 async function replyMessage(replyToken, text) {
-  return fetch("https://api.line.me/v2/bot/message/reply", {
+  await fetch("https://api.line.me/v2/bot/message/reply", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -20,68 +28,109 @@ async function replyMessage(replyToken, text) {
   });
 }
 
+// ===== WEBHOOK =====
 app.post("/webhook", async (req, res) => {
   const event = req.body.events?.[0];
-  if (!event || !event.message || event.message.type !== "text") {
+  if (!event) return res.sendStatus(200);
+
+  const groupId =
+    event.source.groupId ||
+    event.source.roomId ||
+    event.source.userId;
+
+  const trip = getTrip(groupId);
+  let reply = "❓ ไม่เข้าใจคำสั่ง";
+
+  // ===== STAGE 4: รับรูปสลิป =====
+  if (event.message.type === "image") {
+    reply = "📸 รับสลิปแล้ว (กำลังเตรียมสแกน)";
+    await replyMessage(event.replyToken, reply);
+    return res.sendStatus(200);
+  }
+
+  if (event.message.type !== "text") {
     return res.sendStatus(200);
   }
 
   const msg = event.message.text.trim();
-  let reply = "❓ ไม่เข้าใจคำสั่ง";
 
-  // 1️⃣ หารเท่ากัน
-  if (msg.match(/^หาร\s\d+\s\d+$/)) {
-    const [, total, people] = msg.split(" ");
-    reply = `💸 คนละ ${(total / people).toFixed(2)} บาท`;
+  // ===== STAGE 1: ควบคุมทริป =====
+  if (msg === "เริ่มทริป" || msg === "ล้างทริป") {
+    trips[groupId] = [];
+    reply = "✅ เริ่มทริปใหม่แล้ว";
   }
 
-  // 2️⃣ มีคนจ่ายก่อน
+  else if (msg === "สถานะ") {
+    if (trip.length === 0) {
+      reply = "📭 ยังไม่มีข้อมูลในทริป";
+    } else {
+      let sum = 0;
+      reply = "📊 สถานะทริป\n";
+      trip.forEach(p => {
+        reply += `- ${p.name}: ${p.paid} บาท\n`;
+        sum += p.paid;
+      });
+      reply += `รวม ${sum} บาท`;
+    }
+  }
+
+  // ===== STAGE 2: มีคนจ่ายก่อน =====
   else if (msg.match(/^\w+\sจ่าย\s\d+\sหาร\s\d+$/)) {
-    const parts = msg.split(" ");
-    const name = parts[0];
-    const total = Number(parts[2]);
-    const people = Number(parts[4]);
+    const [name,, total,, people] = msg.split(" ");
     const per = total / people;
 
-    trip.push({ name, paid: total, share: per });
+    trip.push({ name, paid: Number(total) });
 
     reply =
       `🧾 ${name} จ่าย ${total} บาท\n` +
       `👥 ${people} คน → คนละ ${per.toFixed(2)} บาท`;
   }
 
-  // 3️⃣ หารไม่เท่ากัน
+  // ===== STAGE 2: หารไม่เท่ากัน =====
   else if (msg.match(/^(\w+\s\d+\s?)+$/)) {
-    trip = [];
+    trip.length = 0;
     const parts = msg.split(" ");
-    let sum = 0;
 
     for (let i = 0; i < parts.length; i += 2) {
-      trip.push({ name: parts[i], paid: Number(parts[i + 1]) });
-      sum += Number(parts[i + 1]);
-    }
-
-    reply = `📊 หารไม่เท่ากัน\nรวม ${sum} บาท`;
-  }
-
-  // 4️⃣ สรุปทั้งทริป
-  else if (msg === "สรุป") {
-    if (trip.length === 0) {
-      reply = "ยังไม่มีข้อมูลทริป ❌";
-    } else {
-      reply = "📌 สรุปทริป\n";
-      trip.forEach(p => {
-        reply += `- ${p.name}: ${p.paid} บาท\n`;
+      trip.push({
+        name: parts[i],
+        paid: Number(parts[i + 1])
       });
     }
+
+    reply = "📊 บันทึกยอดแต่ละคนแล้ว";
   }
 
-  // 5️⃣ ภาษาไทยธรรมชาติ
-  else if (msg.match(/^กินข้าว\s\d+\s\d+\sคน$/)) {
-    const parts = msg.split(" ");
-    const total = Number(parts[1]);
-    const people = Number(parts[2]);
-    reply = `🍽️ กินข้าว\nคนละ ${(total / people).toFixed(2)} บาท`;
+  // ===== STAGE 2: สรุปโอนเงินจริง =====
+  else if (msg === "สรุป") {
+    if (trip.length === 0) {
+      reply = "ยังไม่มีข้อมูล ❌";
+    } else {
+      const total = trip.reduce((s, p) => s + p.paid, 0);
+      const avg = total / trip.length;
+
+      let creditors = [];
+      let debtors = [];
+
+      trip.forEach(p => {
+        const diff = p.paid - avg;
+        if (diff > 0) creditors.push({ name: p.name, amt: diff });
+        else if (diff < 0) debtors.push({ name: p.name, amt: -diff });
+      });
+
+      reply = "💸 สรุปการโอน\n";
+      debtors.forEach(d => {
+        let remaining = d.amt;
+        creditors.forEach(c => {
+          if (c.amt > 0 && remaining > 0) {
+            const pay = Math.min(c.amt, remaining);
+            reply += `${d.name} → โอนให้ ${c.name} ${pay.toFixed(2)} บาท\n`;
+            c.amt -= pay;
+            remaining -= pay;
+          }
+        });
+      });
+    }
   }
 
   await replyMessage(event.replyToken, reply);
@@ -89,5 +138,5 @@ app.post("/webhook", async (req, res) => {
 });
 
 app.listen(process.env.PORT || 3000, () => {
-  console.log("Server is running");
+  console.log("MoneycalBot running");
 });
